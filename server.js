@@ -1,39 +1,69 @@
 require("dotenv").config();
 
 const express = require("express");
-const mysql = require("mysql2");
+const mysql = require("mysql2/promise");
 const path = require("path");
 
 const app = express();
-const PORT = 3000;
 
-// Middleware
+// Vercel PORT அல்லது Local PORT
+const PORT = process.env.PORT || 3000;
+
+
+// MIDDLEWARE
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Serve HTML, CSS, images, PDF, etc.
+
+// SERVE FRONTEND FILES
+
 app.use(express.static(path.join(__dirname, "public")));
 
-// MySQL Connection
-const db = mysql.createConnection({
-    host: process.env.MYSQLHOST,
-    port: process.env.MYSQLPORT,
-    user: process.env.MYSQLUSER,
-    password: process.env.MYSQLPASSWORD,
-    database: process.env.MYSQLDATABASE
+
+// MYSQL CONNECTION POOL
+
+const pool = mysql.createPool({
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT || 3306),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
 
-// Connect Database
-db.connect((err) => {
-    if (err) {
-        console.log("MySQL Connection Failed:", err.message);
-    } else {
+// TEST MYSQL CONNECTION
+
+async function testDatabase() {
+
+    try {
+
+        const connection = await pool.getConnection();
+
         console.log("MySQL Connected Successfully");
-    }
-});
 
-// Contact Form
-app.post("/contact", (req, res) => {
+        connection.release();
+
+    } catch (error) {
+
+        console.error(
+            "MySQL Connection Failed:",
+            error.message
+        );
+
+    }
+
+}
+
+testDatabase();
+
+
+// CONTACT FORM
+
+app.post("/contact", async (req, res) => {
 
     const {
         name,
@@ -43,72 +73,229 @@ app.post("/contact", (req, res) => {
         message
     } = req.body;
 
-    const sql = `
-        INSERT INTO contact
-        (name, email, phone, subject, message)
-        VALUES (?, ?, ?, ?, ?)
-    `;
 
-    const values = [
-        name,
-        email,
-        phone,
-        subject,
-        message
-    ];
+    // Check required fields
 
-    db.query(sql, values, (err, result) => {
+    if (!name || !email || !message) {
 
-        if (err) {
-            console.log("Database Error:", err);
-            return res.status(500).send(`
-                <h2>Error saving message</h2>
-                <a href="/">Go Back</a>
-            `);
-        }
+        return res.status(400).send(`
+            <h2>Please fill all required fields</h2>
+
+            <br>
+
+            <a href="/">
+                Go Back
+            </a>
+        `);
+
+    }
+
+
+    try {
+
+        // SQL Query
+
+        const sql = `
+            INSERT INTO contact
+            (name, email, phone, subject, message)
+            VALUES (?, ?, ?, ?, ?)
+        `;
+
+
+        // Values
+
+        const values = [
+            name,
+            email,
+            phone || null,
+            subject || null,
+            message
+        ];
+
+
+        // Insert Data
+
+        await pool.execute(sql, values);
+
+
+        console.log(
+            "Contact message saved successfully"
+        );
+
+
+        // Success Response
 
         res.send(`
+
+            <!DOCTYPE html>
+
             <html>
+
             <head>
-                <title>Success</title>
+
+                <meta charset="UTF-8">
+
+                <meta name="viewport"
+                      content="width=device-width, initial-scale=1.0">
+
+                <title>Message Sent</title>
+
+
                 <style>
+
                     body {
-                        font-family: Arial;
+
+                        font-family: Arial, sans-serif;
+
                         text-align: center;
+
                         padding-top: 100px;
+
+                        background: #f5f5f5;
+
                     }
+
+
+                    .success-box {
+
+                        background: white;
+
+                        width: 90%;
+
+                        max-width: 500px;
+
+                        margin: auto;
+
+                        padding: 40px;
+
+                        border-radius: 10px;
+
+                        box-shadow:
+                        0 5px 20px
+                        rgba(0,0,0,0.1);
+
+                    }
+
 
                     h2 {
+
                         color: green;
+
                     }
 
+
                     a {
+
+                        display: inline-block;
+
+                        margin-top: 20px;
+
                         text-decoration: none;
+
                         background: #333;
+
                         color: white;
-                        padding: 10px 20px;
+
+                        padding: 12px 25px;
+
                         border-radius: 5px;
+
                     }
+
+
+                    a:hover {
+
+                        background: #555;
+
+                    }
+
                 </style>
+
             </head>
+
 
             <body>
 
-                <h2>Message Saved Successfully!</h2>
 
-                <p>Thank you for contacting me.</p>
+                <div class="success-box">
 
-                <br>
+                    <h2>
+                        Message Sent Successfully!
+                    </h2>
 
-                <a href="/">Go Back to Portfolio</a>
+
+                    <p>
+                        Thank you for contacting me.
+                    </p>
+
+
+                    <a href="/">
+                        Go Back to Portfolio
+                    </a>
+
+                </div>
+
 
             </body>
+
             </html>
+
         `);
-    });
+
+
+    } catch (error) {
+
+
+        console.error(
+            "Database Error:",
+            error.message
+        );
+
+
+        res.status(500).send(`
+
+            <!DOCTYPE html>
+
+            <html>
+
+            <head>
+
+                <title>Database Error</title>
+
+            </head>
+
+
+            <body>
+
+                <h2>
+                    Error saving message
+                </h2>
+
+
+                <p>
+                    Please try again later.
+                </p>
+
+
+                <a href="/">
+                    Go Back
+                </a>
+
+            </body>
+
+            </html>
+
+        `);
+
+    }
+
 });
 
-// Start Server
+
 app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+
+    console.log(
+        `Server running on port ${PORT}`
+    );
+
 });
